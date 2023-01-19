@@ -1,0 +1,150 @@
+---
+title: "ESM 244 Lab 2"
+author: "Olivia Somhegyi"
+date: "2023-01-19"
+output: html_document
+---
+
+```{r setup, echo=TRUE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo=TRUE, message=FALSE, warning=FALSE) #For every other chunk after, top is for this chunk. Echo means TRUE for knitting
+
+library(tidyverse)
+library(palmerpenguins)
+library(AICcmodavg)
+library(equatiomatic)
+```
+
+# Predicting penguin mass
+```{r}
+penguins_clean <- penguins %>% 
+  drop_na() %>% 
+  rename(mass = body_mass_g,
+         bill_l = bill_length_mm,
+         bill_d = bill_depth_mm,
+         flip_l = flipper_length_mm) #rename columns
+
+mdl1 <- lm(mass ~ bill_l + bill_d + flip_l + species + sex + island, data = penguins_clean) # ~ = "as a function of"
+```
+#summary() tells us the formula we used, the data it came from, info about residuals.
+
+```{r}
+f1 <- mass ~ bill_l + bill_d + flip_l + species + sex + island
+mdl1 <- lm(f1, data = penguins_clean)
+
+f2 <- mass ~ bill_l + bill_d + flip_l + species + sex
+mdl2 <- lm(f2, data = penguins_clean)
+
+f3 <- mass ~ bill_d + flip_l + species + sex
+mdl3 <- lm(f3, data = penguins_clean)
+
+AIC(mdl1, mdl2, mdl3)
+BIC(mdl1, mdl2, mdl3)
+
+AICcmodavg::AICc(mdl1) #I think this is AIC corrected
+
+aictab(list(mdl1, mdl2, mdl3))
+bictab(list(mdl1, mdl2, mdl3)) #Good way to test to see which variable to include or not include
+```
+#class(f1) to check that it is a formula
+
+# Compare models using K-fold cross validation
+
+```{r}
+folds <- 10
+fold_vec <- rep(1:folds, length.out = nrow(penguins_clean)) #create a vector of 1 through folds (10)
+
+set.seed(42)
+penguins_fold <- penguins_clean %>% 
+  mutate(group = sample(fold_vec, size = n(), replace = FALSE)) #take set of 330 instances of 1 thru 10 , I am going to pull one at random and stick at row 1, etc.
+
+table(penguins_fold$group)
+
+test_df <- penguins_fold %>% 
+  filter(group == 1)
+train_df <- penguins_fold %>% 
+  filter(group != 1)
+```
+
+```{r}
+calc_mean <- function(x) {
+  m <- sum(x) / length(x)
+}
+calc_rmse <- function(x, y) {
+  rmse <- (x-y)^2 %>% 
+    mean() %>% 
+    sqrt()
+  return(rmse)
+}
+  
+#vector of predictions and vector of actual values
+#fuction - I am going to give you an x and y, do all of these things and then return it back to me
+```
+
+
+```{r}
+training_mdl1 <- lm(f1, data = train_df)
+
+training_mdl2 <- lm(f2, data = train_df)
+
+training_mdl3 <- lm(f3, data = train_df)
+
+predict_test <- test_df %>% 
+  mutate(model1 = predict(training_mdl1, test_df),
+         model2 = predict(training_mdl2, test_df),
+         model3 = predict(training_mdl3, test_df))
+
+rmse_predict_test <- predict_test %>% 
+  summarize(rmse_mdl1 = calc_rmse(model1, mass),
+            rmse_mdl2 = calc_rmse(model2, mass),
+            rmse_mdl3 = calc_rmse(model3, mass)) #Take model1 column and subtrack the mass column, square all of those differences. so if it is a big difference it get penalized heavily, then we will take the average of the entire column, and then take the mean (i think) how far away are the predicted values of model 1 from the known mass.
+#How does the model compare seeing unseen data, trying to predict data out of our data set
+```
+
+
+let's iterate!
+```{r}
+rmse_df <- data.frame()
+
+for (i in 1:folds) {
+  kfold_test_df <- penguins_fold %>% 
+    filter(group == i)
+  kfold_train_df <- penguins_fold %>% 
+    filter(group !=i)
+  
+  kfold_mdl1 <- lm(f1, data = kfold_train_df)
+  kfold_mdl2 <- lm(f2, data = kfold_train_df)
+  kfold_mdl3 <- lm(f3, data = kfold_train_df)
+  
+  kfold_pred_df <- kfold_test_df %>% 
+    mutate(mdl1 = predict(kfold_mdl1, kfold_test_df),
+           mdl2 = predict(kfold_mdl2, .),
+           mdl3 = predict(kfold_mdl3, .))
+  kfold_rmse_df <- kfold_pred_df %>% 
+    summarize(rmse_mdl1 = calc_rmse(mdl1, mass),
+              rmse_mdl2 = calc_rmse(mdl2, mass),
+              rmse_mdl3 = calc_rmse(mdl3, mass),
+              test_gp = i)
+  rmse_df <- bind_rows(rmse_df, kfold_rmse_df)
+}
+
+rmse_df %>% 
+  summarize(mean_rmse_mdl1 = mean(rmse_mdl1),
+            mean_rmse_mdl2 = mean(rmse_mdl2),
+            mean_rmse_mdl3 = mean(rmse_mdl3))
+# the "." says whatever we are operating on, stick it here
+```
+
+# Finalize the model
+```{r}
+final_mdl <- lm(f2, data = penguins_clean)
+```
+
+Our final model:
+`r equatiomatic::extract_eq(final_mdl, wrap = TRUE)`
+
+And with coefficients:
+`r equatiomatic::extract_eq(final_mdl, wrap = TRUE, use_coefs = TRUE)`
+
+
+
+
